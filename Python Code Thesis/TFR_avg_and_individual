@@ -1,0 +1,258 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import mne
+from mne.time_frequency import tfr_morlet
+from mne.preprocessing import ICA
+from helper_funcs import load_conditions_from_mat, preprocess_subject, EVENT_ID
+from pathlib import Path
+
+# -------------------------
+# Subject definitions  (single session per participant; 10 unique subjects)
+# Each entry: (bdf_file, mat_files, subject_id, bad_channels, eog_chs, drop_chs, has_rest_blocks)
+# -------------------------
+OUT_DIR = Path("/Users/katrinosk/Desktop/Thesis/figures_final")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+SUBJECTS = [
+    # (
+    #     "/Users/katrinosk/Desktop/Thesis/data/Testdata-18-03-26-SA10.bdf",
+    #     ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_SA10.mat"],
+    #     "S01 session 1", [], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], False
+    # ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-29-04-26-SA11.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_SA11.mat"],
+        "S01 session 2", [], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], False
+    ),
+    # (
+    #     "/Users/katrinosk/Desktop/Thesis/data/Testdata-20-03-26-SI1.bdf",
+    #     ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_SI1.mat"],
+    #     "S02 session 1", [], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], False
+    # ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata30-04-2026-SI2.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_SI2.mat"],
+        "S02 session 2", ['Fp2'], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], False
+    ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-18-03-26-KR1.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_KR1.mat"],
+        "S03", ['F6'], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], False
+    ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-08-05-26-AS1.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_AS1.mat",
+         "/Users/katrinosk/Desktop/Thesis/data/gammaphase_AS1-2.mat"],
+        "S04", ['F7'], ['EXG3', 'EXG5'], ['EXG4', 'EXG6', 'EXG7', 'EXG8'], True # connected EXG5 instead of EXG4 for EOG reference
+    ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-11-05-26-AR1.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_AR1.mat",
+         "/Users/katrinosk/Desktop/Thesis/data/gammaphase_AR1-2.mat"],
+        "S05", ['F3', 'F5', 'FC3', 'FC5'], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], True
+    ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-12-05-26-FR1.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_FR1.mat",
+         "/Users/katrinosk/Desktop/Thesis/data/gammaphase_FR1-2.mat"],
+        "S06", [], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], True
+    ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-14-05-26-S07.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_S07.mat",
+         "/Users/katrinosk/Desktop/Thesis/data/gammaphase_S07-2.mat"],
+        "S07", [], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], True
+    ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-14-05-26-S08.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_S08.mat",
+         "/Users/katrinosk/Desktop/Thesis/data/gammaphase_S08-2.mat"],
+        "S08", ['T7', 'T8'], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], True
+    ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-21-05-26-S09.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_S09.mat",
+         "/Users/katrinosk/Desktop/Thesis/data/gammaphase_S09-2.mat"],
+        "S09", [], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], True
+    ),
+    (
+        "/Users/katrinosk/Desktop/Thesis/data/Testdata-21-05-26-S10.bdf",
+        ["/Users/katrinosk/Desktop/Thesis/data/gammaphase_S10.mat",
+         "/Users/katrinosk/Desktop/Thesis/data/gammaphase_S10-2.mat"],
+        "S10", [], ['EXG3', 'EXG4'], ['EXG5', 'EXG6', 'EXG7', 'EXG8'], True
+    ),
+]
+
+# -------------------------
+# Analysis settings
+# -------------------------
+PHI_LABELS = {"phi1": "φ = 0", "phi2": "φ = π/4", "phi3": "φ = π/2",
+              "phi4": "φ = 3π/4", "phi5": "φ = π"}
+
+FREQS = np.linspace(7, 90, 120)
+N_CYCLES = np.minimum(np.maximum(FREQS/2, 3), 15)
+ 
+VMAX = 7.0
+VMIN = -7.0
+DISPLAY_TMIN = -0.5
+DISPLAY_TMAX = 2.0
+EPOCH_MIN = -2.0
+EPOCH_MAX = 3.5
+BASELINE_TMIN = -0.5
+BASELINE_TMAX = 0
+ 
+COMPARE_CHANNELS = ['Oz', 'Cz']
+CH_LABEL = {'Oz': 'Visual', 'Cz': 'Auditory'}
+
+ROWS_PER_IMAGE = 6
+
+def plot_subject_tfr(ch, fig_title, out_path, subj_subset, part_idx):
+    n_rows = len(subj_subset)
+    n_cols = len(conds)
+    fig, axes = plt.subplots(n_rows, n_cols,
+                             figsize=(3.2 * n_cols, 2.4 * n_rows),
+                             sharex=True, sharey=True, squeeze=False)
+    im = None
+    for r, sid in enumerate(subj_subset):
+        for c, cond in enumerate(conds):
+            ax = axes[r][c]
+            data = subj_per_phi.get(sid, {}).get(ch, {}).get(cond, None)
+            if data is None:
+                ax.axis('off'); continue
+            im = _imshow(ax, data)
+            if r == 0:
+                ax.set_title(PHI_LABELS[cond], fontsize=16)
+            if c == 0:
+                ax.set_ylabel(f"{sid}\nFreq (Hz)", fontsize=14)
+            if r == n_rows - 1:
+                ax.set_xlabel("Time (s)", fontsize=14)
+    if im is not None:
+        fig.subplots_adjust(right=0.91, top=0.96)
+        cbar_ax = fig.add_axes([0.93, 0.25, 0.010, 0.5])
+        fig.colorbar(im, cax=cbar_ax, label='Power (dB re. baseline)')
+    fig.suptitle(f"{fig_title} (part {part_idx})", fontsize=16, y=0.995)
+    fig.savefig(out_path, dpi=150)
+    plt.show()
+
+def _imshow(ax, data):
+    im = ax.imshow(
+        data, aspect='auto', origin='lower',
+        extent=[times_ref[0], times_ref[-1], FREQS[0], FREQS[-1]],
+        vmin=VMIN, vmax=VMAX, cmap='RdBu_r', interpolation='bilinear',
+    )
+    ax.axvline(0, color='black', lw=1.0, ls='--')
+    ax.axvline(1.5, color='black', lw=1.0, ls=':')
+    ax.axhline(40, color='white', lw=0.8, ls=':', alpha=0.8)
+    return im
+ 
+# -------------------------
+# Storage
+#   grand_per_phi[channel][condition] -> list of (n_freqs, n_times) per subject
+#   subj_per_phi[subject_id][channel][condition] -> (n_freqs, n_times)
+# -------------------------
+grand_per_phi = {ch: {cond: [] for cond in EVENT_ID} for ch in COMPARE_CHANNELS}
+subj_per_phi = {}
+subj_order = []
+times_ref = None
+ 
+# -------------------------
+# Process each subject
+# -------------------------
+n_total = len(SUBJECTS)
+for subj_idx, (bdf_file, mat_files, subject_id, bad_channels,
+               eog_chs, drop_chs, has_rest_blocks) in enumerate(SUBJECTS):
+
+    print(f"\n[{subj_idx + 1}/{n_total}] Processing {subject_id} ...")
+    subj_order.append(subject_id)
+    subj_per_phi[subject_id] = {ch: {} for ch in COMPARE_CHANNELS}
+
+    epochs, pct_rejected = preprocess_subject(
+        bdf_file, mat_files, bad_channels, eog_chs, drop_chs, has_rest_blocks,
+        reject_uv=100e-6,
+        epoch_tmin=EPOCH_MIN, epoch_tmax=EPOCH_MAX,
+        reject_tmin=BASELINE_TMIN, reject_tmax=1.5,   # reject only up to 1.5 s
+        crop_tmin=EPOCH_MIN, crop_tmax=EPOCH_MAX,       # keep full window for TFR display
+        baseline=(BASELINE_TMIN, 0),
+    )
+
+    for ch in COMPARE_CHANNELS:
+        if ch not in epochs.ch_names:
+            print(f"  {ch} not found, skipping.")
+            continue
+        epochs_ch = epochs.copy().pick([ch])
+        for cond_name in EVENT_ID:
+            ep_cond = epochs_ch[cond_name]
+            if len(ep_cond) == 0:
+                continue
+            tfr = tfr_morlet(ep_cond, freqs=FREQS, n_cycles=N_CYCLES,
+                             use_fft=True, return_itc=False, average=True,
+                             picks='eeg', verbose=False)
+            tfr.apply_baseline(baseline=(BASELINE_TMIN, BASELINE_TMAX),
+                               mode='logratio', verbose=False)
+            tfr.crop(tmin=DISPLAY_TMIN, tmax=DISPLAY_TMAX)
+            power_db = 10 * tfr.data[0]
+            grand_per_phi[ch][cond_name].append(power_db)
+            subj_per_phi[subject_id][ch][cond_name] = power_db
+            if times_ref is None:
+                times_ref = tfr.times
+ 
+# -------------------------
+# Grand average per phi (across subjects)
+# -------------------------
+n_included = len(SUBJECTS)
+grand_avg_phi = {ch: {} for ch in COMPARE_CHANNELS}
+for ch in COMPARE_CHANNELS:
+    for cond in EVENT_ID:
+        if len(grand_per_phi[ch][cond]) > 0:
+            grand_avg_phi[ch][cond] = np.mean(grand_per_phi[ch][cond], axis=0)
+ 
+ 
+# -------------------------
+# Figure 1: grand average, rows = Oz/Cz, cols = phi1..phi5
+# -------------------------
+conds = list(EVENT_ID.keys())
+fig1, axes1 = plt.subplots(len(COMPARE_CHANNELS), len(conds),
+                           figsize=(4 * len(conds), 4 * len(COMPARE_CHANNELS)),
+                           sharex=True, sharey=True, squeeze=False)
+im = None
+for r, ch in enumerate(COMPARE_CHANNELS):
+    for c, cond in enumerate(conds):
+        ax = axes1[r][c]
+        if cond not in grand_avg_phi[ch]:
+            ax.axis('off'); continue
+        im = _imshow(ax, grand_avg_phi[ch][cond])
+        if r == 0:
+            ax.set_title(PHI_LABELS[cond], fontsize=14)
+        if c == 0:
+            ax.set_ylabel(f"{ch} — {CH_LABEL[ch]}\nFrequency (Hz)", fontsize=14)
+        if r == len(COMPARE_CHANNELS) - 1:
+            ax.set_xlabel("Time (s)")
+if im is not None:
+    fig1.subplots_adjust(right=0.90)
+    cbar_ax = fig1.add_axes([0.92, 0.15, 0.015, 0.7])  # [left, bottom, width, height]
+    cbar = fig1.colorbar(im, cax=cbar_ax)
+    cbar.set_label('Power (dB re. baseline)', fontsize=14)
+fig1.suptitle(f"Overall Average TFR by Phase Condition — n={n_included}", fontsize=16)
+fig1.savefig(OUT_DIR / "tfr_grandavg_byphi_Oz_Cz.png", dpi=150)  # drop bbox_inches='tight'
+plt.show()
+ 
+# -------------------------
+# Figures 2 & 3: per-subject per-phi grids, split into two images per channel
+#   rows = 6 subjects, cols = phi1..phi5
+# -------------------------
+
+# split the 12 subjects/sessions into chunks of 6
+subj_chunks = [subj_order[i:i + ROWS_PER_IMAGE]
+               for i in range(0, len(subj_order), ROWS_PER_IMAGE)]
+
+for ch, label in [('Oz', 'Oz (visual)'), ('Cz', 'Cz (auditory)')]:
+    for p, chunk in enumerate(subj_chunks, start=1):
+        out = OUT_DIR / f"tfr_individual_byphi_{ch}_part{p}.png"
+        plot_subject_tfr(ch, f"Individual TFRs by Phase Condition — {label}",
+                         out, chunk, p)
+
+ 
+print("\nSaved:")
+print(OUT_DIR / "tfr_overallavg_byphi_Oz_Cz.png")
+print(OUT_DIR / "tfr_individual_byphi_Oz.png")
+print(OUT_DIR / "tfr_individual_byphi_Cz.png")
+ 
